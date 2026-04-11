@@ -72,6 +72,10 @@ If you enjoy Desktop Mario, consider buying me a coffee!
 
 [![Donate](https://img.shields.io/badge/Donate-PayPal-blue.svg)](https://www.paypal.com/paypalme/bhanu1001)
 
+## 🎨 Credits
+
+Sprite assets by **[webfussel](https://webfussel.itch.io/more-bit-8-bit-mario)** — *More-bit 8-bit Mario* (itch.io). Thank you for the amazing SMAS-style sprites!
+
 ## 📄 License
 
 MIT License — see [LICENSE](LICENSE) for details.

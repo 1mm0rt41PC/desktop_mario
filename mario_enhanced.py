@@ -5,6 +5,8 @@ Desktop Mario – A stress-relief mini-game that lives on your desktop.
   - Shift to run faster
   - ESC to hide
   - Right-click system tray icon to quit
+
+Sprite assets by webfussel — https://webfussel.itch.io/more-bit-8-bit-mario
 """
 import tkinter as tk
 import random
@@ -14,6 +16,12 @@ import math
 import threading
 import sys
 import os
+
+try:
+    from PIL import Image as PILImage, ImageTk
+    _HAS_PIL = True
+except ImportError:
+    _HAS_PIL = False
 
 # ============================================================
 #  PALETTE
@@ -26,6 +34,131 @@ PAL = {
     'C': '#F8D878',
 }
 PX = 3
+
+# ============================================================
+#  PNG SPRITE LOADER  (uses SMAS-style assets if available)
+# ============================================================
+_ASSET_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
+_ASSET_DIR = os.path.join(_ASSET_ROOT, 'sprites')
+_ENEMY_SHEET = os.path.join(_ASSET_ROOT, 'enemies.png')
+
+_GOOMBA_PNG_BOXES = (
+    (0, 19, 18, 36),
+    (18, 19, 36, 36),
+    (36, 27, 54, 36),
+)
+_GREEN_KOOPA_PNG_BOXES = (
+    (54, 126, 72, 168),
+    (72, 126, 90, 168),
+)
+_RED_KOOPA_PNG_BOXES = (
+    (54, 168, 72, 210),
+    (72, 168, 90, 210),
+)
+_GREEN_SHELL_PNG_BOX = (126, 126, 144, 168)
+_RED_SHELL_PNG_BOX = (126, 168, 144, 210)
+
+def _crop_opaque_rows(img, prefer_top=False):
+    """Crop to a contiguous opaque row run.
+    Some extracted sheets contain two vertically stacked sprites in one PNG.
+    For the broken big Mario frames, we keep only the top run."""
+    alpha = img.getchannel('A')
+    bbox = alpha.getbbox()
+    if bbox is None:
+        return img
+    left, top, right, bottom = bbox
+    img = img.crop((left, top, right, bottom))
+    alpha = img.getchannel('A')
+    width, height = img.size
+    solid_rows = []
+    for y in range(height):
+        if alpha.crop((0, y, width, y + 1)).getbbox() is not None:
+            solid_rows.append(y)
+    if not solid_rows:
+        return img
+
+    runs = []
+    run_start = solid_rows[0]
+    run_end = solid_rows[0]
+    for y in solid_rows[1:]:
+        if y <= run_end + 1:
+            run_end = y
+        else:
+            runs.append((run_start, run_end))
+            run_start = y
+            run_end = y
+    runs.append((run_start, run_end))
+
+    if len(runs) == 1:
+        return img
+
+    if prefer_top:
+        keep_top, keep_bottom = runs[0]
+    else:
+        keep_top, keep_bottom = max(runs, key=lambda run: run[1] - run[0])
+
+    row_alpha = alpha.crop((0, keep_top, width, keep_bottom + 1))
+    row_bbox = row_alpha.getbbox()
+    if row_bbox is None:
+        return img
+    row_left, row_top, row_right, row_bottom = row_bbox
+    img = img.crop((row_left, keep_top + row_top, row_right, keep_top + row_bottom))
+
+    # Guard against malformed extracted big frames that still contain
+    # a second tiny Mario stacked below the main one.
+    if prefer_top and img.size[1] > 40:
+        img = img.crop((0, 0, img.size[0], min(img.size[1], 34)))
+
+    return img
+
+def _fit_png_sprite(img, target_w, target_h, flip_h=False, prefer_top=False):
+    """Trim, scale, and bottom-align a PIL sprite image to the target canvas."""
+    if img is None:
+        return None
+    img = img.convert('RGBA')
+    img = _crop_opaque_rows(img, prefer_top=prefer_top)
+    alpha = img.getchannel('A')
+    bbox = alpha.getbbox()
+    if bbox is None:
+        return None
+    img = img.crop(bbox)
+    if flip_h:
+        img = img.transpose(PILImage.FLIP_LEFT_RIGHT)
+    sw, sh = img.size
+    scale = min(target_w / sw, target_h / sh)
+    new_w = max(1, int(sw * scale))
+    new_h = max(1, int(sh * scale))
+    img = img.resize((new_w, new_h), PILImage.NEAREST)
+    canvas_img = PILImage.new('RGBA', (target_w, target_h), (0, 0, 0, 0))
+    ox = (target_w - new_w) // 2
+    oy = target_h - new_h
+    canvas_img.paste(img, (ox, oy), img)
+    return canvas_img
+
+def _load_png_sprite(filename, target_w, target_h, flip_h=False):
+    """Load a PNG sprite, scale uniformly to fit target, center on transparent bg.
+    Returns a PIL RGBA Image or None if file not found."""
+    if not _HAS_PIL:
+        return None
+    path = os.path.join(_ASSET_DIR, filename)
+    if not os.path.isfile(path):
+        return None
+    img = PILImage.open(path)
+    return _fit_png_sprite(img, target_w, target_h, flip_h=flip_h,
+                           prefer_top=filename.startswith('big_'))
+
+def _load_png_sheet_sprite(sheet_path, crop_box, target_w, target_h, flip_h=False):
+    """Load a sprite from a larger PNG sheet using an absolute crop box."""
+    if not _HAS_PIL or not os.path.isfile(sheet_path):
+        return None
+    sheet = PILImage.open(sheet_path).convert('RGBA')
+    img = sheet.crop(crop_box)
+    return _fit_png_sprite(img, target_w, target_h, flip_h=flip_h)
+
+def _pil_to_photoimage(pil_img):
+    """Convert PIL RGBA Image to tk.PhotoImage (transparency-aware)."""
+    return ImageTk.PhotoImage(pil_img)
+
 
 # ============================================================
 #  SPRITES  (all 16x16 unless noted)
@@ -528,6 +661,26 @@ BOBOMB_EXPLODE = [
     "................",
     "................",
 ]
+FIREBALL_1 = [
+    "........",
+    "........",
+    "...YY...",
+    "..YRYY..",
+    "..YRRY..",
+    "..YYYY..",
+    "...YY...",
+    "........",
+]
+FIREBALL_2 = [
+    "........",
+    "........",
+    "..YYY...",
+    "..YRRY..",
+    ".YRRRY..",
+    "..YRRY..",
+    "..YYY...",
+    "........",
+]
 
 # ============================================================
 #  SPRITE ENGINE  (PhotoImage – 1 canvas item per sprite)
@@ -554,7 +707,7 @@ def _frame_to_photo(frame, px):
 
 class Sprite:
     __slots__ = ('canvas', 'frames', 'px', '_imgs', 'item', 'cur', 'x', 'y')
-    def __init__(self, canvas, frames, px=PX):
+    def __init__(self, canvas, frames, px=PX, photos=None):
         self.canvas = canvas
         self.frames = frames
         self.px = px
@@ -563,17 +716,24 @@ class Sprite:
         self.cur = -1
         self.x = 0
         self.y = 0
-        for idx, frame in enumerate(frames):
-            key = (id(frame[0]), idx, px, len(frames))
-            if key in _img_cache:
-                self._imgs.append(_img_cache[key])
-            else:
-                photo = _frame_to_photo(frame, px)
-                _img_cache[key] = photo
-                self._imgs.append(photo)
+        if photos is not None:
+            # Pre-built PhotoImage objects (from PNG sprites)
+            self._imgs = list(photos)
+        else:
+            for idx, frame in enumerate(frames):
+                key = (id(frame[0]), idx, px, len(frames))
+                if key in _img_cache:
+                    self._imgs.append(_img_cache[key])
+                else:
+                    photo = _frame_to_photo(frame, px)
+                    _img_cache[key] = photo
+                    self._imgs.append(photo)
 
     def draw(self, idx):
-        idx %= len(self.frames)
+        n = len(self._imgs)
+        if n == 0:
+            return
+        idx %= n
         if idx == self.cur:
             return
         self.cur = idx
@@ -596,6 +756,7 @@ class Sprite:
         if self.item is not None:
             self.canvas.delete(self.item)
             self.item = None
+            self.cur = -1  # reset so draw() recreates the item
 
 # ============================================================
 #  SCORE POPUP
@@ -635,15 +796,84 @@ class Game:
         self.keys = set()
 
         # ---- MARIO (frames 0-3 right, 4-7 left) ----
-        self.mario = Sprite(canvas, [
-            MARIO_STAND, MARIO_RUN1, MARIO_RUN2, MARIO_JUMP,
-            MARIO_STAND_L, MARIO_RUN1_L, MARIO_RUN2_L, MARIO_JUMP_L,
-        ])
-        self.big_mario = Sprite(canvas, [
-            BIG_MARIO_STAND, BIG_MARIO_RUN1, BIG_MARIO_RUN2, BIG_MARIO_JUMP,
-            BIG_MARIO_STAND_L, BIG_MARIO_RUN1_L, BIG_MARIO_RUN2_L, BIG_MARIO_JUMP_L,
-        ])
-        self.big_mario.move_to(-200, -200)  # hide offscreen until needed
+        S = self.SPR   # 48
+        BIG_H = 32 * PX  # 96
+
+        # Try to load SMAS-style PNG sprites
+        _small_png = _HAS_PIL and all(
+            os.path.isfile(os.path.join(_ASSET_DIR, f))
+            for f in ['small_0.png', 'small_2.png', 'small_3.png', 'small_5.png']
+        )
+        _big_png = _HAS_PIL and all(
+            os.path.isfile(os.path.join(_ASSET_DIR, f))
+            for f in ['big_0.png', 'big_2.png', 'big_3.png', 'big_5.png']
+        )
+
+        if _small_png:
+            _sm_photos = []
+            for fn in ['small_0.png', 'small_2.png', 'small_3.png', 'small_5.png']:
+                _sm_photos.append(_pil_to_photoimage(_load_png_sprite(fn, S, S)))
+            for fn in ['small_0.png', 'small_2.png', 'small_3.png', 'small_5.png']:
+                _sm_photos.append(_pil_to_photoimage(_load_png_sprite(fn, S, S, flip_h=True)))
+        else:
+            _sm_photos = None
+
+        if _big_png:
+            _bg_photos = []
+            for fn in ['big_0.png', 'big_2.png', 'big_3.png', 'big_5.png']:
+                _bg_photos.append(_pil_to_photoimage(_load_png_sprite(fn, S, BIG_H)))
+            for fn in ['big_0.png', 'big_2.png', 'big_3.png', 'big_5.png']:
+                _bg_photos.append(_pil_to_photoimage(_load_png_sprite(fn, S, BIG_H, flip_h=True)))
+        else:
+            _bg_photos = None
+
+        # Single sprite with 16 frames: 0-7 = small, 8-15 = big
+        if _sm_photos and _bg_photos:
+            self.mario = Sprite(canvas, [], photos=_sm_photos + _bg_photos)
+        elif _sm_photos:
+            big_frames = [
+                BIG_MARIO_STAND, BIG_MARIO_RUN1, BIG_MARIO_RUN2, BIG_MARIO_JUMP,
+                BIG_MARIO_STAND_L, BIG_MARIO_RUN1_L, BIG_MARIO_RUN2_L, BIG_MARIO_JUMP_L,
+            ]
+            big_built = [_frame_to_photo(f, PX) for f in big_frames]
+            self.mario = Sprite(canvas, [], photos=_sm_photos + big_built)
+        elif _bg_photos:
+            small_frames = [
+                MARIO_STAND, MARIO_RUN1, MARIO_RUN2, MARIO_JUMP,
+                MARIO_STAND_L, MARIO_RUN1_L, MARIO_RUN2_L, MARIO_JUMP_L,
+            ]
+            small_built = [_frame_to_photo(f, PX) for f in small_frames]
+            self.mario = Sprite(canvas, [], photos=small_built + _bg_photos)
+        else:
+            all_frames = [
+                MARIO_STAND, MARIO_RUN1, MARIO_RUN2, MARIO_JUMP,
+                MARIO_STAND_L, MARIO_RUN1_L, MARIO_RUN2_L, MARIO_JUMP_L,
+                BIG_MARIO_STAND, BIG_MARIO_RUN1, BIG_MARIO_RUN2, BIG_MARIO_JUMP,
+                BIG_MARIO_STAND_L, BIG_MARIO_RUN1_L, BIG_MARIO_RUN2_L, BIG_MARIO_JUMP_L,
+            ]
+            self.mario = Sprite(canvas, all_frames)
+
+        self.enemy_photos = {}
+        if _HAS_PIL and os.path.isfile(_ENEMY_SHEET):
+            def _enemy_photo(box, flip_h=False):
+                img = _load_png_sheet_sprite(_ENEMY_SHEET, box, S, S, flip_h=flip_h)
+                return _pil_to_photoimage(img) if img is not None else None
+
+            goomba_photos = [_enemy_photo(box) for box in _GOOMBA_PNG_BOXES]
+            green_walk = [_enemy_photo(box) for box in _GREEN_KOOPA_PNG_BOXES]
+            red_walk = [_enemy_photo(box) for box in _RED_KOOPA_PNG_BOXES]
+            red_walk_flip = [_enemy_photo(box, flip_h=True) for box in _RED_KOOPA_PNG_BOXES]
+            green_shell = _enemy_photo(_GREEN_SHELL_PNG_BOX)
+            red_shell = _enemy_photo(_RED_SHELL_PNG_BOX)
+
+            if all(goomba_photos):
+                self.enemy_photos['goomba'] = goomba_photos
+            if all(green_walk) and green_shell is not None:
+                self.enemy_photos['koopa'] = green_walk + [green_shell]
+            if all(red_walk) and all(red_walk_flip) and red_shell is not None:
+                self.enemy_photos['red_koopa'] = [red_walk[0], red_walk[1], red_shell,
+                                                  red_walk_flip[0], red_walk_flip[1]]
+
         self.is_big = False        # mushroom power-up state
         self.shrink_timer = 0      # invincibility after getting hit while big
         self.mwx = 200.0          # world-x
@@ -655,6 +885,10 @@ class Game:
         self.jumping = False       # variable-height jump tracking
         self.stomp_grace = 0       # invincibility frames after stomp/kick
         self.invincible = 60       # spawn invincibility (like original SMB)
+
+        # ---- FIREBALL ----
+        self.fireballs = []        # {'s', 'wx', 'wy', 'vx', 'vy'}
+        self.fire_cooldown = 0     # frames between throws
 
         # ---- DEATH / RESPAWN ----
         self.dead = False
@@ -695,6 +929,17 @@ class Game:
             text="ARROWS: Move  SPACE: Jump (hold=higher)  SHIFT: Run  ESC: Quit  SCORE: 0",
             fill='#FFFFFF', font=('Courier', 12, 'bold'), anchor='n')
 
+        # ---- DONATE BUTTON (top-right) ----
+        self.donate_btn = canvas.create_text(
+            W - 20, 18,
+            text="☕ Donate",
+            fill='#FFD700', font=('Courier', 13, 'bold'), anchor='ne')
+        canvas.tag_bind(self.donate_btn, '<Button-1>', lambda e: _open_donate())
+        canvas.tag_bind(self.donate_btn, '<Enter>',
+            lambda e: canvas.itemconfigure(self.donate_btn, fill='#FFFFFF'))
+        canvas.tag_bind(self.donate_btn, '<Leave>',
+            lambda e: canvas.itemconfigure(self.donate_btn, fill='#FFD700'))
+
         # Start generation well past Mario's spawn (wx=200) — safe runway
         self._generate(600, W + 600)
 
@@ -717,6 +962,23 @@ class Game:
         ny = random.randint(30, max(60, self.H // 3))
         self.canvas.move(c['tag'], nx - c['x'], ny - c['y'])
         c['x'], c['y'] = nx, ny
+
+    def _make_enemy_sprite(self, kind):
+        photos = self.enemy_photos.get(kind)
+        if photos:
+            sprite = Sprite(self.canvas, [], photos=photos)
+        elif kind == 'goomba':
+            sprite = Sprite(self.canvas, [GOOMBA_1, GOOMBA_2, GOOMBA_FLAT])
+        elif kind == 'koopa':
+            sprite = Sprite(self.canvas, [KOOPA_L1, KOOPA_L2, SHELL_SPRITE])
+        elif kind == 'red_koopa':
+            sprite = Sprite(self.canvas, [KOOPA_L1, KOOPA_L2, SHELL_SPRITE, KOOPA_R1, KOOPA_R2])
+        elif kind == 'bobomb':
+            sprite = Sprite(self.canvas, [BOBOMB_1, BOBOMB_2, BOBOMB_EXPLODE])
+        else:
+            raise ValueError(f'Unknown enemy kind: {kind}')
+        sprite.draw(0)
+        return sprite
 
     # ---- gap detection ----
     def _is_in_gap(self, wx, w=None):
@@ -765,41 +1027,41 @@ class Game:
                 s = Sprite(self.canvas, [QBLOCK, QBLOCK_USED]); s.draw(0)
                 self.qblocks.append({'s': s, 'wx': x, 'y': self.ground_y - B * 3, 'hit': False, 'reward': 'coin'})
                 x += B
-            elif r < 0.32:
+            elif r < 0.35:
                 # goomba
-                s = Sprite(self.canvas, [GOOMBA_1, GOOMBA_2, GOOMBA_FLAT]); s.draw(0)
+                s = self._make_enemy_sprite('goomba')
                 self.enemies.append({'s': s, 'wx': float(x), 'wy': self.ground_y,
                                      'kind': 'goomba', 'vx': -1.5, 'state': 'walk', 'timer': 0})
-            elif r < 0.40:
+            elif r < 0.46:
                 # green koopa
-                s = Sprite(self.canvas, [KOOPA_L1, KOOPA_L2, SHELL_SPRITE]); s.draw(0)
+                s = self._make_enemy_sprite('koopa')
                 self.enemies.append({'s': s, 'wx': float(x), 'wy': self.ground_y,
                                      'kind': 'koopa', 'vx': -1.5, 'state': 'walk', 'timer': 0})
-            elif r < 0.46:
+            elif r < 0.54:
                 # red koopa (turns at edges)
-                s = Sprite(self.canvas, [KOOPA_L1, KOOPA_L2, SHELL_SPRITE, KOOPA_R1, KOOPA_R2]); s.draw(0)
+                s = self._make_enemy_sprite('red_koopa')
                 self.enemies.append({'s': s, 'wx': float(x), 'wy': self.ground_y,
                                      'kind': 'red_koopa', 'vx': -1.5, 'state': 'walk', 'timer': 0})
-            elif r < 0.52:
+            elif r < 0.61:
                 # bob-omb
-                s = Sprite(self.canvas, [BOBOMB_1, BOBOMB_2, BOBOMB_EXPLODE]); s.draw(0)
+                s = self._make_enemy_sprite('bobomb')
                 self.enemies.append({'s': s, 'wx': float(x), 'wy': self.ground_y,
                                      'kind': 'bobomb', 'vx': -1.0, 'state': 'walk', 'timer': 0})
-            elif r < 0.58:
+            elif r < 0.67:
                 # small staircase
                 h = random.randint(2, 4)
                 for step in range(h):
                     s = Sprite(self.canvas, [BRICK]); s.draw(0)
                     self.bricks.append({'s': s, 'wx': x + step * B, 'y': self.ground_y - (step + 1) * B})
                 x += h * B
-            elif r < 0.64:
+            elif r < 0.73:
                 # floating coins
                 for i in range(3):
                     co = Sprite(self.canvas, [COIN1, COIN2]); co.draw(0)
                     cy = self.ground_y - B * 2 - int(math.sin(i / 2 * math.pi) * B)
                     self.coins.append({'s': co, 'wx': x + i * B, 'wy': cy, 'got': False, 'ft': 0})
                 x += 3 * B
-            elif r < 0.72:
+            elif r < 0.81:
                 # pipe
                 ph = random.choice([2, 3]) * B
                 pw = 2 * B
@@ -810,7 +1072,7 @@ class Game:
                     'lip_h': lip_h, 'ids': [],
                 })
                 x += pw
-            elif r < 0.78:
+            elif r < 0.87:
                 # ground gap (pit)
                 gap_w = random.randint(3, 4) * B
                 self.gaps.append((x, x + gap_w))
@@ -840,6 +1102,8 @@ class Game:
         self.score += pts
         self.canvas.itemconfig(self.hud,
             text=f"ARROWS: Move  SPACE: Jump (hold=higher)  SHIFT: Run  ESC: Quit  SCORE: {self.score}")
+        self.canvas.tag_raise(self.hud)
+        self.canvas.tag_raise(self.donate_btn)
         self._popup(sx, sy, f"+{pts}")
 
     # ---- AABB overlap ----
@@ -857,8 +1121,6 @@ class Game:
             self.shrink_timer = 60  # blink for ~2 seconds
             # Adjust position (big sprite is taller)
             self.my += self.SPR  # drop down since small sprite is shorter
-            # Hide the big sprite
-            self.big_mario.move_to(-200, -200)
         else:
             self._die()
 
@@ -868,7 +1130,6 @@ class Game:
         self.mvy = -14  # pop up
         self.mvx = 0
         self.is_big = False
-        self.big_mario.move_to(-200, -200)
 
     def _respawn(self):
         self.dead = False
@@ -891,7 +1152,6 @@ class Game:
         self.stomp_grace = 0
         self.is_big = False
         self.shrink_timer = 0
-        self.big_mario.move_to(-200, -200)
 
     # ---- MAIN UPDATE ----
     def update(self):
@@ -913,6 +1173,8 @@ class Game:
         self.tick += 1
         B = self.BLK
         S = self.SPR
+        MH = (32 * PX) if self.is_big else S   # Mario hitbox height
+        MT = self.my - (MH - S) if self.is_big else self.my  # Mario hitbox top
 
         # ---- invincibility / grace countdowns ----
         if self.stomp_grace > 0:
@@ -968,11 +1230,26 @@ class Game:
         if self.mvy > 18:
             self.mvy = 18
 
+        # ---- FIREBALL (Big Mario throws with 'f' or 'z') ----
+        if self.fire_cooldown > 0:
+            self.fire_cooldown -= 1
+        if self.is_big and self.fire_cooldown <= 0 and ('f' in self.keys or 'z' in self.keys):
+            fb_dir = 1 if self.facing_right else -1
+            fb_wx = self.mwx + (S if fb_dir > 0 else -12)
+            fb_wy = self.my + S // 3
+            fs = Sprite(self.canvas, [FIREBALL_1, FIREBALL_2], px=PX)
+            fs.draw(0)
+            self.fireballs.append({
+                's': fs, 'wx': fb_wx, 'wy': fb_wy,
+                'vx': 7.0 * fb_dir, 'vy': -4.0,
+            })
+            self.fire_cooldown = 12  # limit fire rate
+
         # ---- move X, then check solids ----
         self.mwx += self.mvx
         solids = self._all_solids()
         for sx, sy, sw, sh in solids:
-            if self._overlap(self.mwx, self.my, S, S, sx, sy, sw, sh):
+            if self._overlap(self.mwx, MT, S, MH, sx, sy, sw, sh):
                 if self.mvx > 0:
                     self.mwx = sx - S
                 elif self.mvx < 0:
@@ -982,15 +1259,16 @@ class Game:
 
         # ---- move Y, then check solids ----
         self.my += self.mvy
+        MT = self.my - (MH - S) if self.is_big else self.my  # recalc after Y move
         self.on_ground = False
         for sx, sy, sw, sh in solids:
-            if self._overlap(self.mwx + 2, self.my, S - 4, S, sx, sy, sw, sh):
+            if self._overlap(self.mwx + 2, MT, S - 4, MH, sx, sy, sw, sh):
                 if self.mvy > 0:
                     self.my = sy - S
                     self.mvy = 0
                     self.on_ground = True
                 elif self.mvy < 0:
-                    self.my = sy + sh
+                    self.my = sy + sh + (MH - S) if self.is_big else sy + sh
                     self.mvy = 1
                     # bump ?-blocks
                     for q in self.qblocks:
@@ -1045,42 +1323,25 @@ class Game:
         # ---- draw Mario (small or big, direction-aware, blink) ----
         msx = self.mwx - self.cam
         face_off = 0 if self.facing_right else 4
+        # Single sprite: frames 0-7 = small, 8-15 = big
+        big_off = 8 if self.is_big else 0
         if self.is_big:
-            # Big Mario (32px tall sprite)
-            big_h = 32 * PX
-            draw_y = self.my - (big_h - S)  # align feet
-            if not self.on_ground:
-                self.big_mario.draw(3 + face_off)
-            elif abs(self.mvx) > 0.5:
-                self.big_mario.draw(1 + (self.tick // 4 % 2) + face_off)
-            else:
-                self.big_mario.draw(0 + face_off)
-            self.big_mario.move_to(msx, draw_y)
-            # Hide small sprite
-            self.mario.move_to(-200, -200)
-            # Blink
-            blink = (self.invincible > 0 or self.shrink_timer > 0) and self.tick % 4 < 2
-            if blink:
-                self.canvas.itemconfigure(self.big_mario.item, state='hidden')
-            elif self.big_mario.item:
-                self.canvas.itemconfigure(self.big_mario.item, state='normal')
+            draw_y = self.my - (32 * PX - S)  # align feet for big sprite
         else:
-            # Small Mario
-            if not self.on_ground:
-                self.mario.draw(3 + face_off)
-            elif abs(self.mvx) > 0.5:
-                self.mario.draw(1 + (self.tick // 4 % 2) + face_off)
-            else:
-                self.mario.draw(0 + face_off)
-            self.mario.move_to(msx, self.my)
-            # Hide big sprite
-            self.big_mario.move_to(-200, -200)
-            # Blink
-            blink = (self.invincible > 0 or self.shrink_timer > 0) and self.tick % 4 < 2
-            if blink:
-                self.canvas.itemconfigure(self.mario.item, state='hidden')
-            elif self.mario.item:
-                self.canvas.itemconfigure(self.mario.item, state='normal')
+            draw_y = self.my
+        if not self.on_ground:
+            self.mario.draw(big_off + 3 + face_off)
+        elif abs(self.mvx) > 0.5:
+            self.mario.draw(big_off + 1 + (self.tick // 4 % 2) + face_off)
+        else:
+            self.mario.draw(big_off + 0 + face_off)
+        self.mario.move_to(msx, draw_y)
+        # Blink during invincibility
+        blink = (self.invincible > 0 or self.shrink_timer > 0) and self.tick % 4 < 2
+        if blink and self.mario.item:
+            self.canvas.itemconfigure(self.mario.item, state='hidden')
+        elif self.mario.item:
+            self.canvas.itemconfigure(self.mario.item, state='normal')
 
         # ---- ground tiles (hide over gaps) ----
         tw = len(self.ground_tiles) * B
@@ -1100,6 +1361,8 @@ class Game:
                 b['s'].destroy(); self.bricks.remove(b)
             elif sx < self.W + B:
                 b['s'].move_to(sx, b['y'])
+            else:
+                b['s'].move_to(-200, -200)
 
         # ---- ?-blocks ----
         for q in self.qblocks[:]:
@@ -1108,16 +1371,20 @@ class Game:
                 q['s'].destroy(); self.qblocks.remove(q)
             elif sx < self.W + B:
                 q['s'].move_to(sx, q['y'])
+            else:
+                q['s'].move_to(-200, -200)
 
         # ---- coins ----
         for c in self.coins[:]:
             sx = c['wx'] - self.cam
             if sx < -B * 2:
                 c['s'].destroy(); self.coins.remove(c); continue
+            if sx >= self.W + B:
+                c['s'].move_to(-200, -200); continue
             if not c['got']:
                 c['s'].draw((self.tick // 8) % 2)
                 c['s'].move_to(sx, c['wy'])
-                if self._overlap(self.mwx, self.my, S, S, c['wx'], c['wy'], 8 * PX, S):
+                if self._overlap(self.mwx, MT, S, MH, c['wx'], c['wy'], 8 * PX, S):
                     c['got'] = True; c['ft'] = 15
                     self._add_score(100, sx, c['wy'])
             else:
@@ -1153,7 +1420,7 @@ class Game:
                         break
                 m['s'].move_to(sx, m['wy'])
                 # Mario collects mushroom
-                if self._overlap(self.mwx, self.my, S, S, m['wx'], m['wy'], S, S):
+                if self._overlap(self.mwx, MT, S, MH, m['wx'], m['wy'], S, S):
                     m['active'] = False
                     m['s'].destroy()
                     self.mushrooms.remove(m)
@@ -1161,6 +1428,54 @@ class Game:
                         self.is_big = True
                         self._add_score(1000, sx, m['wy'] - 20)
                     continue
+
+        # ---- fireballs (physics + enemy kill) ----
+        FB_SZ = 8 * PX  # fireball visual size
+        for fb in self.fireballs[:]:
+            fb['wy'] += fb['vy']
+            fb['wx'] += fb['vx']
+            fb['vy'] += 1.0  # gravity
+            # Bounce on ground
+            if fb['wy'] >= self.ground_y:
+                fb['wy'] = self.ground_y
+                fb['vy'] = -8.0
+            # Bounce on solid tops / destroy on walls
+            hit_solid = False
+            for bwx, by, bw, bh in solids:
+                if self._overlap(fb['wx'], fb['wy'], FB_SZ, FB_SZ, bwx, by, bw, bh):
+                    # Side hit = destroy fireball
+                    if fb['vy'] <= 0 or fb['wy'] + FB_SZ > by + FB_SZ // 2:
+                        fb['s'].destroy(); self.fireballs.remove(fb)
+                        hit_solid = True
+                        break
+                    else:
+                        fb['wy'] = by - FB_SZ
+                        fb['vy'] = -8.0
+                        break
+            if hit_solid:
+                continue
+            # Off screen = remove
+            fbsx = fb['wx'] - self.cam
+            if fbsx < -B * 2 or fbsx > self.W + B * 2 or fb['wy'] > self.H + 50:
+                fb['s'].destroy(); self.fireballs.remove(fb); continue
+            # Kill enemies
+            killed = False
+            for e in self.enemies[:]:
+                if e['state'] == 'flat':
+                    continue
+                if self._overlap(fb['wx'], fb['wy'], FB_SZ, FB_SZ, e['wx'], e['wy'], S, S):
+                    e['state'] = 'flat'
+                    e['timer'] = 18
+                    e['s'].draw(min(2, len(e['s']._imgs) - 1))
+                    self._add_score(200, e['wx'] - self.cam, e['wy'] - 20)
+                    fb['s'].destroy(); self.fireballs.remove(fb)
+                    killed = True
+                    break
+            if killed:
+                continue
+            # Animate + draw
+            fb['s'].draw((self.tick // 3) % 2)
+            fb['s'].move_to(fbsx, fb['wy'])
 
         # ---- pipes (canvas rectangles) ----
         for p in self.pipes[:]:
@@ -1203,15 +1518,32 @@ class Game:
                     sx + B // 3 + 4, p['y'] + p['h'])
 
         # ---- enemies (with authentic SMB shell mechanics) ----
-        mario_l, mario_t = self.mwx, self.my
+        mario_l, mario_t = self.mwx, MT
         mario_r, mario_b = self.mwx + S, self.my + S
         for e in self.enemies[:]:
             sx = e['wx'] - self.cam
-            if sx < -B * 3 or sx > self.W + B * 3:
+            # Only despawn if too far LEFT (already passed)
+            if sx < -B * 5:
                 e['s'].destroy(); self.enemies.remove(e); continue
+
+            # Enemies far ahead: let them walk but don't render or collide
+            if sx > self.W + B * 3:
+                if e['state'] == 'walk':
+                    e['wx'] += e['vx']
+                e['s'].move_to(-200, -200)
+                continue
 
             if e['state'] == 'walk':
                 e['wx'] += e['vx']
+                # Collide with solid blocks and pipes
+                for bwx, by, bw, bh in solids:
+                    if self._overlap(e['wx'], e['wy'], S, S, bwx, by, bw, bh):
+                        if e['vx'] > 0:
+                            e['wx'] = bwx - S
+                        else:
+                            e['wx'] = bwx + bw
+                        e['vx'] *= -1
+                        break
                 # Red koopas turn at edges (from original RedKoopa AI)
                 if e['kind'] == 'red_koopa':
                     ahead_x = e['wx'] + (S if e['vx'] > 0 else -4)
@@ -1234,11 +1566,14 @@ class Game:
                 e['s'].move_to(sx, e['wy'])
 
                 # Stomp / contact check (skip during invincibility or stomp grace)
-                if self.invincible <= 0 and self.stomp_grace <= 0 and self.shrink_timer <= 0 and self._overlap(mario_l + 4, mario_t, S - 8, S, e['wx'], e['wy'], S, S):
+                if self.invincible <= 0 and self.stomp_grace <= 0 and self.shrink_timer <= 0 and self._overlap(mario_l + 4, mario_t, S - 8, MH, e['wx'], e['wy'], S, S):
                     if self.mvy > 0 and mario_b < e['wy'] + S * 0.6:
                         # Stomped from above
                         if e['kind'] == 'goomba':
-                            e['state'] = 'flat'; e['s'].draw(2); e['timer'] = 18
+                            e['state'] = 'flat'; e['timer'] = 18
+                            e['wy'] += S // 2  # squish down permanently
+                            e['s'].draw(2)
+                            e['s'].move_to(sx, e['wy'])
                         elif e['kind'] == 'bobomb':
                             # Stomp bob-omb: starts fuse countdown
                             e['state'] = 'fuse'; e['timer'] = 90; e['vx'] = 0
@@ -1266,7 +1601,7 @@ class Game:
                     e['timer'] = 0
                     continue
                 # Kick the still shell on contact (skip during grace/invincibility)
-                if self.invincible <= 0 and self.stomp_grace <= 0 and self._overlap(mario_l + 2, mario_t + 4, S - 4, S - 8, e['wx'], e['wy'], S, S):
+                if self.invincible <= 0 and self.stomp_grace <= 0 and self._overlap(mario_l + 2, mario_t + 4, S - 4, MH - 8, e['wx'], e['wy'], S, S):
                     # Kick direction based on Mario's side
                     kick_dir = 10 if self.mwx + S / 2 < e['wx'] + S / 2 else -10
                     e['state'] = 'shell'
@@ -1295,7 +1630,7 @@ class Game:
                             continue
                         if abs(other['wx'] - e['wx']) < blast_r and abs(other['wy'] - e['wy']) < blast_r:
                             other['state'] = 'flat'
-                            other['s'].draw(min(2, len(other['s'].frames) - 1))
+                            other['s'].draw(min(2, len(other['s']._imgs) - 1))
                             other['timer'] = 18
                             self._add_score(200, other['wx'] - self.cam, other['wy'] - 20)
                     # Hurt Mario if in blast radius
@@ -1331,7 +1666,7 @@ class Game:
                         e['vx'] *= -1
                         break
                 # Moving shell can hurt Mario too
-                if self.invincible <= 0 and self.stomp_grace <= 0 and self._overlap(mario_l + 4, mario_t, S - 8, S, e['wx'], e['wy'], S, S):
+                if self.invincible <= 0 and self.stomp_grace <= 0 and self._overlap(mario_l + 4, mario_t, S - 8, MH, e['wx'], e['wy'], S, S):
                     if self.mvy > 0 and mario_b < e['wy'] + S * 0.5:
                         # Stomp moving shell → stops it
                         e['state'] = 'shell_still'
@@ -1509,4 +1844,14 @@ class App:
 
 
 if __name__ == "__main__":
-    App().run()
+    # Single-instance mutex – prevent multiple overlays
+    _mutex = ctypes.windll.kernel32.CreateMutexW(None, True, "DesktopMario_SingleInstance")
+    if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+        print("Desktop Mario is already running. Exiting.")
+        ctypes.windll.kernel32.CloseHandle(_mutex)
+        sys.exit(0)
+    try:
+        App().run()
+    finally:
+        ctypes.windll.kernel32.ReleaseMutex(_mutex)
+        ctypes.windll.kernel32.CloseHandle(_mutex)
