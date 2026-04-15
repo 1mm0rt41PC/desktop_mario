@@ -51,7 +51,18 @@ python mario_enhanced.py
 
 ## 🔨 Build
 
-### Build .exe
+### Build Go executable (recommended)
+```bash
+# Build for the current platform
+go build -o desktop_mario ./cmd/desktop_mario
+
+# Cross-compile for Windows
+GOOS=windows GOARCH=amd64 go build -ldflags "-H windowsgui" -o DesktopMario.exe ./cmd/desktop_mario
+```
+
+Logs are written to `desktop_mario.log` next to the executable.
+
+### Build Python .exe (legacy)
 ```bash
 pip install pyinstaller pystray Pillow
 python -m PyInstaller --onefile --windowed --name DesktopMario --hidden-import pystray --hidden-import pystray._win32 --hidden-import PIL mario_enhanced.py
