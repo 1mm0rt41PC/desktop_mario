@@ -6,12 +6,14 @@
 //	Shift       – run faster
 //	F / Z       – throw fireball (Big Mario only)
 //	ESC         – hide
+//	--game-now  – start the game immediately visible (skip hotkey trigger)
 //
 // Build: go build -o desktop_mario ./cmd/desktop_mario
 // No installer required; produces a single executable.
 package main
 
 import (
+	"flag"
 	"log"
 	"os"
 	"path/filepath"
@@ -39,6 +41,9 @@ func setupLogging() {
 func main() {
 	setupLogging()
 
+	gameNow := flag.Bool("game-now", false, "start the game immediately visible without requiring the Ctrl+Alt+M hotkey")
+	flag.Parse()
+
 	// Determine screen size before opening the window.
 	sw, sh := ebiten.ScreenSizeInFullscreen()
 	W := float64(sw)
@@ -65,7 +70,7 @@ func main() {
 	// Start platform-specific setup (Win32 hotkey registration, etc.).
 	setupPlatform(toggleFn)
 
-	g := newGame(W, H, toggleCh)
+	g := newGame(W, H, toggleCh, *gameNow)
 
 	if err := ebiten.RunGame(g); err != nil {
 		log.Fatal(err)
