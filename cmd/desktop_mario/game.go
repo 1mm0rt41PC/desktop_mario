@@ -68,12 +68,12 @@ type Game struct {
 	visible bool
 }
 
-func newGame(w, h float64, toggleCh <-chan struct{}) *Game {
+func newGame(w, h float64, toggleCh <-chan struct{}, gameNow bool) *Game {
 	g := &Game{
 		W:           w,
 		H:           h,
 		facingRight: true,
-		visible:     true,
+		visible:     gameNow,
 		toggleCh:    toggleCh,
 	}
 	g.spr = buildSprites()
@@ -120,6 +120,9 @@ func (g *Game) Update() error {
 	// Apply Win32 transparency on the very first frame (window now exists).
 	if !g.platformReady {
 		applyTransparency()
+		if !g.visible {
+			platformHideWindow()
+		}
 		g.platformReady = true
 	}
 
