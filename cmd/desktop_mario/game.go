@@ -14,7 +14,8 @@ const blk = 16 * pixelScale // 48
 
 // Game implements ebiten.Game.
 type Game struct {
-	W, H float64 // screen dimensions
+	W, H     float64 // screen dimensions
+	taskbarH float64 // taskbar height in pixels (excluded from game ground)
 
 	tick  int
 	score int
@@ -68,10 +69,11 @@ type Game struct {
 	visible bool
 }
 
-func newGame(w, h float64, toggleCh <-chan struct{}, gameNow bool) *Game {
+func newGame(w, h float64, taskbarH int, toggleCh <-chan struct{}, gameNow bool) *Game {
 	g := &Game{
 		W:           w,
 		H:           h,
+		taskbarH:    float64(taskbarH),
 		facingRight: true,
 		visible:     gameNow,
 		toggleCh:    toggleCh,
@@ -81,7 +83,7 @@ func newGame(w, h float64, toggleCh <-chan struct{}, gameNow bool) *Game {
 	g.mwx = 200
 	g.my = g.groundY()
 	g.lastSafeWX = g.mwx
-	g.invincible = 60
+	g.invincible = 120
 
 	// Ground tiles: enough to fill width + 3 extra
 	n := int(w/blk) + 4
@@ -97,7 +99,7 @@ func newGame(w, h float64, toggleCh <-chan struct{}, gameNow bool) *Game {
 		g.clouds = append(g.clouds, cloud{
 			x:     float64(rand.Intn(int(w))),
 			y:     float64(rand.Intn(int(h/3)+1) + 30),
-			speed: rand.Float64()*0.2 + 0.2,
+			speed: rand.Float64()*0.1 + 0.1,
 			w:     cw,
 			h:     ch,
 		})
@@ -109,7 +111,7 @@ func newGame(w, h float64, toggleCh <-chan struct{}, gameNow bool) *Game {
 }
 
 func (g *Game) groundY() float64 {
-	return g.H - 48 - blk
+	return g.H - g.taskbarH - 48 - blk
 }
 
 // ── ebiten.Game interface ─────────────────────────────────────────────────────
@@ -117,13 +119,16 @@ func (g *Game) groundY() float64 {
 func (g *Game) Layout(ow, oh int) (int, int) { return ow, oh }
 
 func (g *Game) Update() error {
-	// Apply Win32 transparency on the very first frame (window now exists).
+	// Apply Win32 transparency once the window handle is available.
+	// applyTransparency returns false if HWND is not yet ready; retry next frame.
 	if !g.platformReady {
-		applyTransparency()
-		if !g.visible {
-			platformHideWindow()
+		if applyTransparency() {
+			if !g.visible {
+				platformHideWindow()
+			}
+			g.platformReady = true
 		}
-		g.platformReady = true
+		return nil
 	}
 
 	// Handle toggle from hotkey goroutine.
@@ -147,11 +152,10 @@ func (g *Game) Update() error {
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
+	// Always clear to fully transparent so the desktop shows through.
+	screen.Fill(color.RGBA{0, 0, 0, 0})
 	if !g.visible {
 		return
 	}
-	// Black background; pure-black pixels become transparent on Windows
-	// via the WS_EX_LAYERED / LWA_COLORKEY mechanism.
-	screen.Fill(color.RGBA{0, 0, 0, 255})
 	g._draw(screen)
 }

@@ -141,7 +141,11 @@ func (g *Game) _draw(screen *ebiten.Image) {
 		img := g._enemyImage(&e)
 		if img != nil {
 			op := &ebiten.DrawImageOptions{}
-			op.GeoM.Translate(sx, e.wy)
+			// Bottom-align sprite to hitbox bottom so tall sprites (koopa) don't
+			// overflow below their collision box into the ground row.
+			sprH := float64(img.Bounds().Dy())
+			drawY := e.wy + float64(blk) - sprH
+			op.GeoM.Translate(sx, drawY)
 			screen.DrawImage(img, op)
 		}
 	}

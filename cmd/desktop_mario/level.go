@@ -40,8 +40,8 @@ func (g *Game) _inGap(wx, w float64) bool {
 // _die starts Mario's death animation.
 func (g *Game) _die() {
 	g.dead = true
-	g.deadTimer = 40
-	g.mvy = -14
+	g.deadTimer = 80
+	g.mvy = -7
 	g.mvx = 0
 	g.isBig = false
 }
@@ -63,7 +63,7 @@ func (g *Game) _respawn() {
 	g.mvy = 0
 	g.onGround = true
 	g.jumping = false
-	g.invincible = 60
+	g.invincible = 120
 	g.stompGrace = 0
 	g.isBig = false
 	g.shrinkTimer = 0
@@ -76,7 +76,7 @@ func (g *Game) _takeHit() {
 	}
 	if g.isBig {
 		g.isBig = false
-		g.shrinkTimer = 60
+		g.shrinkTimer = 120
 		g.my += float64(blk)
 	} else {
 		g._die()
@@ -87,7 +87,7 @@ func (g *Game) _takeHit() {
 func (g *Game) _addScore(pts int, sx, sy float64) {
 	g.score += pts
 	g.popups = append(g.popups, scorePopup{
-		x: sx, y: sy, text: fmt.Sprintf("+%d", pts), life: 20,
+		x: sx, y: sy, text: fmt.Sprintf("+%d", pts), life: 40,
 	})
 }
 
@@ -130,19 +130,19 @@ func (g *Game) _generate(lo, hi int) {
 			x += B
 		case r < 0.35:
 			g.enemies = append(g.enemies, enemy{
-				kind: kindGoomba, wx: x, wy: g.groundY(), vx: -1.5,
+				kind: kindGoomba, wx: x, wy: g.groundY(), vx: -0.75,
 			})
 		case r < 0.46:
 			g.enemies = append(g.enemies, enemy{
-				kind: kindKoopa, wx: x, wy: g.groundY(), vx: -1.5,
+				kind: kindKoopa, wx: x, wy: g.groundY(), vx: -0.75,
 			})
 		case r < 0.54:
 			g.enemies = append(g.enemies, enemy{
-				kind: kindRedKoopa, wx: x, wy: g.groundY(), vx: -1.5,
+				kind: kindRedKoopa, wx: x, wy: g.groundY(), vx: -0.75,
 			})
 		case r < 0.61:
 			g.enemies = append(g.enemies, enemy{
-				kind: kindBobomb, wx: x, wy: g.groundY(), vx: -1.0,
+				kind: kindBobomb, wx: x, wy: g.groundY(), vx: -0.5,
 			})
 		case r < 0.67:
 			// Staircase

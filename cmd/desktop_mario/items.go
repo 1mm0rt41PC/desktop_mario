@@ -12,12 +12,12 @@ func (g *Game) _updateCoins(solids [][4]float64, MT, MH float64) {
 		if !c.got {
 			if overlap(g.mwx, MT, float64(blk), MH, c.wx, c.wy, 8*pixelScale, float64(blk)) {
 				c.got = true
-				c.ft = 15
+				c.ft = 30
 				g._addScore(100, sx, c.wy)
 			}
 		} else {
 			c.ft--
-			c.wy -= 5
+			c.wy -= 2.5
 			if c.ft <= 0 {
 				continue
 			}
@@ -37,9 +37,9 @@ func (g *Game) _updateMushrooms(solids [][4]float64, MT, MH float64) {
 			continue
 		}
 		if m.active {
-			m.vy += 1.0
-			if m.vy > 10 {
-				m.vy = 10
+			m.vy += 0.5
+			if m.vy > 5 {
+				m.vy = 5
 			}
 			m.wx += m.vx
 			m.wy += m.vy
@@ -80,10 +80,10 @@ func (g *Game) _updateFireballs(solids [][4]float64) {
 		fb := &g.fireballs[i]
 		fb.wy += fb.vy
 		fb.wx += fb.vx
-		fb.vy += 1.0
+		fb.vy += 0.5
 		if fb.wy >= g.groundY() {
 			fb.wy = g.groundY()
-			fb.vy = -8.0
+			fb.vy = -4.0
 		}
 		hitSolid := false
 		for _, s := range solids {
@@ -92,7 +92,7 @@ func (g *Game) _updateFireballs(solids [][4]float64) {
 					hitSolid = true
 				} else {
 					fb.wy = s[1] - fbSz
-					fb.vy = -8.0
+					fb.vy = -4.0
 				}
 				break
 			}
@@ -112,7 +112,7 @@ func (g *Game) _updateFireballs(solids [][4]float64) {
 			}
 			if overlap(fb.wx, fb.wy, fbSz, fbSz, e.wx, e.wy, float64(blk), float64(blk)) {
 				e.state = stateFlat
-				e.timer = 18
+				e.timer = 36
 				g._addScore(200, e.wx-g.cam, e.wy-20)
 				killed = true
 				break
@@ -131,7 +131,7 @@ func (g *Game) _updatePopups() {
 	alivePopups := g.popups[:0]
 	for i := range g.popups {
 		p := &g.popups[i]
-		p.y -= 3
+		p.y -= 1.5
 		p.life--
 		if p.life > 0 {
 			alivePopups = append(alivePopups, *p)

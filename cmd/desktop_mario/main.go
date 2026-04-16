@@ -8,8 +8,7 @@
 //	ESC         – hide
 //	--game-now  – start the game immediately visible (skip hotkey trigger)
 //
-// Build: go build -o desktop_mario ./cmd/desktop_mario
-// No installer required; produces a single executable.
+// Build: go build -ldflags="-H=windowsgui" -o desktop_mario.exe ./cmd/desktop_mario
 package main
 
 import (
@@ -44,10 +43,19 @@ func main() {
 	gameNow := flag.Bool("game-now", false, "start the game immediately visible without requiring the Ctrl+Alt+M hotkey")
 	flag.Parse()
 
-	// Determine screen size before opening the window.
+	// Full screen dimensions for window and game coordinate system.
 	sw, sh := ebiten.ScreenSizeInFullscreen()
 	W := float64(sw)
 	H := float64(sh)
+
+	// Work area excludes the taskbar — compute taskbar height so the ground
+	// can be positioned above it. Fall back to 0 if unavailable.
+	_, wh := getWorkArea()
+	taskbarH := 0
+	if wh > 0 && wh < sh {
+		taskbarH = sh - wh
+	}
+	log.Printf("screen=%dx%d workH=%d taskbarH=%d", sw, sh, wh, taskbarH)
 
 	// Configure the Ebiten window: full-screen borderless, always-on-top.
 	ebiten.SetWindowDecorated(false)
@@ -55,8 +63,9 @@ func main() {
 	ebiten.SetWindowSize(sw, sh)
 	ebiten.SetWindowPosition(0, 0)
 	ebiten.SetWindowTitle("Desktop Mario")
-	// 30 TPS matches the original Python ~30 fps loop.
-	ebiten.SetTPS(30)
+	ebiten.SetWindowMousePassthrough(true)
+	// 60 TPS for smooth gameplay.
+	ebiten.SetTPS(60)
 
 	// Channel for the global hotkey → toggle visibility.
 	toggleCh := make(chan struct{}, 1)
@@ -70,9 +79,13 @@ func main() {
 	// Start platform-specific setup (Win32 hotkey registration, etc.).
 	setupPlatform(toggleFn)
 
-	g := newGame(W, H, toggleCh, *gameNow)
+	g := newGame(W, H, taskbarH, toggleCh, *gameNow)
 
-	if err := ebiten.RunGame(g); err != nil {
+	opts := &ebiten.RunGameOptions{
+		ScreenTransparent: true,
+		SkipTaskbar:       true,
+	}
+	if err := ebiten.RunGameWithOptions(g, opts); err != nil {
 		log.Fatal(err)
 	}
 }

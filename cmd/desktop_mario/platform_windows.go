@@ -3,34 +3,24 @@
 package main
 
 import (
+	"log"
 	"runtime"
 	"syscall"
 	"unsafe"
-
-	"github.com/hajimehoshi/ebiten/v2"
 )
 
 var (
 	user32 = syscall.NewLazyDLL("user32.dll")
 
-	procFindWindowW             = user32.NewProc("FindWindowW")
-	procGetWindowLongW          = user32.NewProc("GetWindowLongW")
-	procSetWindowLongW          = user32.NewProc("SetWindowLongW")
-	procSetLayeredWindowAttribs = user32.NewProc("SetLayeredWindowAttributes")
-	procShowWindow              = user32.NewProc("ShowWindow")
-	procRegisterHotKey          = user32.NewProc("RegisterHotKey")
-	procUnregisterHotKey        = user32.NewProc("UnregisterHotKey")
-	procGetMessageW             = user32.NewProc("GetMessageW")
+	procFindWindowW           = user32.NewProc("FindWindowW")
+	procShowWindow            = user32.NewProc("ShowWindow")
+	procRegisterHotKey        = user32.NewProc("RegisterHotKey")
+	procUnregisterHotKey      = user32.NewProc("UnregisterHotKey")
+	procGetMessageW           = user32.NewProc("GetMessageW")
+	procSystemParametersInfoW = user32.NewProc("SystemParametersInfoW")
 )
 
-// gwlExStyleUint is GWL_EXSTYLE (-20) represented as a uint32 value
-// suitable for passing to GetWindowLongW/SetWindowLongW via syscall.Call.
-// -20 as int32 = 0xFFFFFFEC; Windows reads it as a signed index.
-const gwlExStyleUint = uintptr(0xFFFFFFEC)
-
 const (
-	wsExLayered    = uintptr(0x00080000)
-	lwaColorKey    = uintptr(0x00000001)
 	swShow         = uintptr(5)
 	swHide         = uintptr(0)
 	wmHotkey       = uint32(0x0312)
@@ -38,13 +28,29 @@ const (
 	modControl     = uintptr(0x0002)
 	vkM            = uintptr(0x4D)
 	hotkeyID       = uintptr(1)
-	transparentRGB = uintptr(0x00000000) // pure black (COLORREF 0x00BBGGRR)
+	spiGetWorkArea = uintptr(0x0030)
 )
 
 // windowTitle must match the title set by ebiten.SetWindowTitle in main.go.
 const windowTitle = "Desktop Mario"
 
+// winRECT mirrors the Win32 RECT structure.
+type winRECT struct{ Left, Top, Right, Bottom int32 }
+
+// getWorkArea returns the usable screen dimensions excluding the taskbar.
+func getWorkArea() (int, int) {
+	var r winRECT
+	procSystemParametersInfoW.Call(spiGetWorkArea, 0, uintptr(unsafe.Pointer(&r)), 0)
+	w := int(r.Right - r.Left)
+	h := int(r.Bottom - r.Top)
+	if w <= 0 || h <= 0 {
+		return 0, 0 // caller falls back to full screen size
+	}
+	return w, h
+}
+
 // getHWND locates the game window using FindWindowW and the known title.
+// Returns 0 if not found yet.
 func getHWND() uintptr {
 	p, err := syscall.UTF16PtrFromString(windowTitle)
 	if err != nil {
@@ -54,37 +60,25 @@ func getHWND() uintptr {
 	return hwnd
 }
 
-// applyTransparency makes the window layered with pure black as the color key.
-// Must be called after the window is created (inside Update/Draw, not before RunGame).
-func applyTransparency() {
-	hwnd := getHWND()
-	if hwnd == 0 {
-		return
-	}
-	exStyle, _, _ := procGetWindowLongW.Call(hwnd, gwlExStyleUint)
-	procSetWindowLongW.Call(hwnd, gwlExStyleUint, exStyle|wsExLayered)
-	// crKey=0 (black), bAlpha=255, dwFlags=LWA_COLORKEY
-	procSetLayeredWindowAttribs.Call(hwnd, transparentRGB, 255, lwaColorKey)
+// applyTransparency is a no-op here — transparency is handled by ebiten's
+// RunGameWithOptions{ScreenTransparent: true}. Returns true once the window
+// exists (HWND is valid), which signals platformReady.
+func applyTransparency() bool {
+	return getHWND() != 0
 }
 
 // platformShowWindow shows the game window.
 func platformShowWindow() {
-	hwnd := getHWND()
-	if hwnd != 0 {
+	if hwnd := getHWND(); hwnd != 0 {
 		procShowWindow.Call(hwnd, swShow)
-		return
 	}
-	ebiten.RestoreWindow()
 }
 
 // platformHideWindow hides the game window without destroying it.
 func platformHideWindow() {
-	hwnd := getHWND()
-	if hwnd != 0 {
+	if hwnd := getHWND(); hwnd != 0 {
 		procShowWindow.Call(hwnd, swHide)
-		return
 	}
-	ebiten.MinimizeWindow()
 }
 
 // winMSG is the Windows MSG structure.
@@ -99,16 +93,17 @@ type winMSG struct {
 
 // setupPlatform registers the global Ctrl+Alt+M hotkey and fires toggleFn when pressed.
 // LockOSThread is required so that RegisterHotKey and GetMessageW always run
-// on the same OS thread – without it the goroutine may migrate between threads
-// and WM_HOTKEY messages are never delivered.
+// on the same OS thread.
 func setupPlatform(toggleFn func()) {
 	go func() {
 		runtime.LockOSThread()
 		procUnregisterHotKey.Call(0, hotkeyID)
-		ret, _, _ := procRegisterHotKey.Call(0, hotkeyID, modAlt|modControl, vkM)
+		ret, _, err := procRegisterHotKey.Call(0, hotkeyID, modAlt|modControl, vkM)
 		if ret == 0 {
-			return // could not register (another instance may own it) — silently skip
+			log.Printf("RegisterHotKey Ctrl+Alt+M failed: %v (another instance may own it)", err)
+			return
 		}
+		log.Println("RegisterHotKey Ctrl+Alt+M registered successfully")
 		var msg winMSG
 		for {
 			r, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&msg)), 0, 0, 0)

@@ -23,10 +23,10 @@ func (g *Game) _update() {
 
 	if g.dead {
 		g.deadTimer--
-		if g.deadTimer > 25 {
-			g.my -= 8
+		if g.deadTimer > 50 {
+			g.my -= 4
 		} else {
-			g.my += 10
+			g.my += 5
 		}
 		if g.deadTimer <= 0 {
 			g._respawn()
@@ -83,15 +83,16 @@ func (g *Game) _update() {
 }
 
 // _updatePhysics handles player input, movement, collision resolution, and camera.
+// Physics constants are tuned for 60 TPS.
 func (g *Game) _updatePhysics(MT, MH float64) {
 	// Input → velocity
 	running := g.keys[ebiten.KeyShiftLeft] || g.keys[ebiten.KeyShiftRight]
-	accel := 0.8
-	maxSpeed := 5.0
-	friction := 0.6
+	accel := 0.4
+	maxSpeed := 2.5
+	friction := 0.3
 	if running {
-		accel = 1.2
-		maxSpeed = 8.0
+		accel = 0.6
+		maxSpeed = 4.0
 	}
 
 	if g.keys[ebiten.KeyArrowRight] {
@@ -112,20 +113,20 @@ func (g *Game) _updatePhysics(MT, MH float64) {
 
 	// Variable-height jump
 	if g.keys[ebiten.KeySpace] && g.onGround {
-		g.mvy = -16
+		g.mvy = -8
 		g.onGround = false
 		g.jumping = true
 	}
 	if g.jumping && g.keys[ebiten.KeySpace] && g.mvy < 0 {
-		g.mvy += 0.55
+		g.mvy += 0.275
 	} else {
-		g.mvy += 1.2
+		g.mvy += 0.6
 		if g.mvy >= 0 {
 			g.jumping = false
 		}
 	}
-	if g.mvy > 18 {
-		g.mvy = 18
+	if g.mvy > 9 {
+		g.mvy = 9
 	}
 
 	// Fireball (Big Mario, press F or Z)
@@ -143,9 +144,9 @@ func (g *Game) _updatePhysics(MT, MH float64) {
 		}
 		g.fireballs = append(g.fireballs, fireball{
 			wx: fbwx, wy: g.my + float64(blk)/3,
-			vx: 7.0 * dir, vy: -4.0,
+			vx: 3.5 * dir, vy: -2.0,
 		})
-		g.fireCooldown = 12
+		g.fireCooldown = 24
 	}
 
 	solids := g._allSolids()

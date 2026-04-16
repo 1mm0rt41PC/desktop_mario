@@ -71,8 +71,8 @@ func (g *Game) _updateWalkingEnemy(e *enemy, i int, solids [][4]float64,
 		overlap(marioL+4, marioT, float64(blk)-8, MH, e.wx, e.wy, float64(blk), float64(blk)) {
 		if g.mvy > 0 && marioB < e.wy+float64(blk)*0.6 {
 			g._stompEnemy(e)
-			g.mvy = -10
-			g.stompGrace = 25
+			g.mvy = -5
+			g.stompGrace = 50
 			g._addScore(200, sx, e.wy-20)
 			return false, true
 		}
@@ -115,16 +115,16 @@ func (g *Game) _stompEnemy(e *enemy) {
 	switch e.kind {
 	case kindGoomba:
 		e.state = stateFlat
-		e.timer = 18
+		e.timer = 36
 		e.wy += float64(blk) / 2
 	case kindBobomb:
 		e.state = stateFuse
-		e.timer = 90
+		e.timer = 180
 		e.vx = 0
 	default:
 		e.state = stateShellStill
 		e.vx = 0
-		e.timer = 300
+		e.timer = 600
 	}
 }
 
@@ -133,14 +133,14 @@ func (g *Game) _updateShellStill(e *enemy, solids [][4]float64, marioL, marioT, 
 	e.timer--
 	if e.timer <= 0 {
 		e.state = stateWalk
-		e.vx = -1.5
+		e.vx = -0.75
 		return
 	}
 	if g.invincible <= 0 && g.stompGrace <= 0 &&
 		overlap(marioL+2, marioT+4, float64(blk)-4, MH-8, e.wx, e.wy, float64(blk), float64(blk)) {
-		dir := 10.0
+		dir := 5.0
 		if g.mwx+float64(blk)/2 > e.wx+float64(blk)/2 {
-			dir = -10
+			dir = -5
 		}
 		e.state = stateShell
 		e.vx = dir
@@ -149,7 +149,7 @@ func (g *Game) _updateShellStill(e *enemy, solids [][4]float64, marioL, marioT, 
 		} else {
 			g.mwx = e.wx + float64(blk) + 2
 		}
-		g.stompGrace = 15
+		g.stompGrace = 30
 		g._addScore(100, sx, e.wy-20)
 	}
 }
@@ -160,7 +160,7 @@ func (g *Game) _updateFuseEnemy(e *enemy) {
 		return
 	}
 	e.state = stateFlat
-	e.timer = 20
+	e.timer = 40
 	blastR := float64(blk) * 3
 	for j := range g.enemies {
 		other := &g.enemies[j]
@@ -208,9 +208,9 @@ func (g *Game) _updateRollingShell(e *enemy, i int, solids [][4]float64,
 		if g.mvy > 0 && marioB < e.wy+float64(blk)*0.5 {
 			e.state = stateShellStill
 			e.vx = 0
-			e.timer = 300
-			g.mvy = -10
-			g.stompGrace = 25
+			e.timer = 600
+			g.mvy = -5
+			g.stompGrace = 50
 			g._addScore(100, sx, e.wy-20)
 			return false, true
 		}
